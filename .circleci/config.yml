@@ -1,41 +1,115 @@
+# Use the latest 2.1 version of CircleCI pipeline process engine. See: https://circleci.com/docs/2.0/configuration-reference
 version: 2.1
-
+# Use a package of configuration called an orb.
 orbs:
-  # The python orb contains a set of prepackaged CircleCI configuration you can use repeatedly in your configuration files
-  # Orb commands and jobs help you with common scripting around a language/tool
-  # so you dont have to copy and paste it everywhere.
-  # See the orb documentation here: https://circleci.com/developer/orbs/orb/circleci/python
-  python: circleci/python@1.2
-
+  # Declare a dependency on the welcome-orb
+  welcome: circleci/welcome-orb@0.4.1
+# Orchestrate or schedule a set of jobs
 workflows:
-  sample:  # This is the name of the workflow, feel free to change it to better match your workflow.
-    # Inside the workflow, you define the jobs you want to run. 
-    # For more details on extending your workflow, see the configuration docs: https://circleci.com/docs/2.0/configuration-reference/#workflows 
+  # Name the workflow "welcome"
+  welcome:
+    # Run the welcome/run job in its own container
     jobs:
-      - build-and-test
+      - welcome/run
+references:
+  # defaults settings per language
+  language_defaults: &language_defaults
+    # offset when indexing the vocabulary
+    # 1 offset is to ignore the padding index
+    vocabulary_offset: 1
+
+    # class to use to linearize the AST
+    # DFSTransformer seems to perform better. BFSTransformer
+    transformer_class_name: DFSTransformer
+
+    # size of the token/node embeddings
+    embeddings_dimension: 100
+
+    # output dimensions of each stacked LSTM
+    output_dimensions: [100, 50]
+
+    # whether to use bidirectional LSTM or not
+    bidirectional_encoding: true
+
+    # the output dimension of the hash layer(s)
+    hash_dims: [20]
 
 
-jobs:
-  build-and-test:  # This is the name of the job, feel free to change it to better match what you're trying to do!
-    # These next lines defines a Docker executors: https://circleci.com/docs/2.0/executor-types/
-    # You can specify an image from Dockerhub or use one of the convenience images from CircleCI's Developer Hub
-    # A list of available CircleCI Docker convenience images are available here: https://circleci.com/developer/images/image/cimg/python
-    # The executor is the environment in which the steps below will be executed - below will use a python 3.9 container
-    # Change the version below to your required version of python
-    docker:
-      - image: cimg/python:3.8
-    # Checkout the code as the first step. This is a dedicated CircleCI step.
-    # The python orb's install-packages step will install the dependencies from a Pipfile via Pipenv by default.
-    # Here we're making sure we use just use the system-wide pip. By default it uses the project root's requirements.txt.
-    # Then run your tests!
-    # CircleCI will report the results back to your VCS provider.
-    steps:
-      - checkout
-      - python/install-packages:
-          pkg-manager: pip
-          # app-dir: ~/project/package-directory/  # If you're requirements.txt isn't in the root directory.
-          # pip-dependency-file: test-requirements.txt  # if you have a different name for your requirements file, maybe one that combines your runtime and test requirements.
-      - run:
-          name: Run tests
-          # This assumes pytest is installed via the install-package step above
-          command: pytest
+model:
+  languages:
+    # name of the language
+    - name: java
+      # load the defaults set above
+      # settings can be overriden below if necessary
+      <<: *language_defaults
+
+      # path to the vocabulary for the language
+      vocabulary: $HOME/workspaces/research/results/java/data/no-id.tsv
+
+      # path to the pre-trained embeddings for the vocabulary
+      embeddings: $HOME/workspaces/research/results/python/embeddings/noid-ch1-anc2-nosib-50d-lr001.npy
+      # maximum length (in AST nodes number) of an input
+      max_length: 500
+    - name: python
+      <<: *language_defaults
+      vocabulary: $HOME/workspaces/research/results/python/vocabulary/no-id.tsv
+      # if not embeddings file is passed, embeddings are randomly initialized
+      # embeddings: $HOME/workspaces/research/results/python/embeddings/noid-ch1-anc2-nosib-50d-lr001.npy
+      max_length: 400
+
+  # type of loss to use
+  # this parameter is passed directly to keras
+  loss: binary_crossentropy
+
+  # how to merge the output of the two LSTMs
+  # see paper for details
+  merge_mode: bidistance
+
+  # dimensions of the output of the merged LSTM outputs
+  merge_output_dim: 64
+
+  # number and dimensions of dense layers after the LSTM
+  dense_layers: [64, 32]
+
+  # optimizer parameters
+  optimizer:
+    # this is passed to keras directly
+    type: rmsprop
+
+generator:
+  # The three following are only needed to generate the SQLite3 DB
+  # pass to the submissions metadata
+  submissions_path: $HOME/workspaces/research/dataset/atcoder/submissions.json
+  # file format of the AST
+  file_format: multi_file
+  # path to the files containing the ASTS
+  asts_path: $HOME/workspaces/research/dataset/atcoder/asts/asts.json
+
+  # path to the SQLite3 DB containing the data
+  db_path: sqlite:///$HOME/workspaces/research/dataset/atcoder/atcoder.db
+
+  # the split ratio for training/cross-validation/test
+  split_ratio: [0.8, 0.1, 0.1]
+
+  # the number of samples to generate for each problem
+  samples_per_problem: 10
+
+  # the maximum distance ratio between the length of the positive
+  # and the negative sample
+  # if too high, the network tends to overfit by learning the length
+  negative_sample_distance: 0.2
+
+  # the weights for positive and negative samples
+  sample_weights: {0: 1.0, 1: 3.0}
+
+trainer:
+  # size of a batch
+  batch_size: 128
+  # number of epochs
+  epochs: 10
+
+  # base directory to output results
+  output_dir: ./tmp
+
+  # whether to output data for tensorboard or not
+  tensorboard_logs: True      p
